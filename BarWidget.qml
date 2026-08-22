@@ -15,10 +15,10 @@ BarWidget {
   readonly property bool active: player !== null
   readonly property bool hasTrack: active && (player.trackTitle || player.trackArtist)
   readonly property string playIcon: active && player.isPlaying ? "󰏤" : "󰐊"
-  readonly property string title: active ? (player.trackTitle || "") : ""
-  readonly property string artist: active ? (player.trackArtist || "") : ""
-  readonly property string album: active && player.trackAlbum ? player.trackAlbum : ""
-  readonly property string artUrl: active && player.trackArtUrl ? player.trackArtUrl : ""
+  readonly property string title: plainText(active ? (player.trackTitle || "") : "")
+  readonly property string artist: plainText(active ? (player.trackArtist || "") : "")
+  readonly property string album: plainText(active && player.trackAlbum ? player.trackAlbum : "")
+  readonly property string artUrl: safeArtUrl(active && player.trackArtUrl ? player.trackArtUrl : "")
   readonly property bool canSeek: active && player.canSeek && player.positionSupported
   readonly property bool showSeekBar: active && player.positionSupported && player.lengthSupported
   readonly property real trackDuration: active && player.lengthSupported ? player.length : 0
@@ -44,6 +44,30 @@ BarWidget {
     : loopState === MprisLoopState.Playlist ? "media-playlist-repeat-symbolic" : "media-playlist-no-repeat-symbolic"
   readonly property string loopTooltip: loopState === MprisLoopState.Track ? "Repeat: current song"
     : loopState === MprisLoopState.Playlist ? "Repeat: playlist" : "Repeat: off"
+
+  // MPRIS metadata comes from whatever local player claims the "deezer"
+  // identity/desktop-entry, so treat title/artist/album as untrusted text.
+  // Every Text item we render it in is forced to Text.PlainText below,
+  // which alone is enough to stop markup interpretation there - but the
+  // shared bar tooltip defaults to AutoText and we can't change that from
+  // here, so strip the angle brackets that its rich-text sniffing keys off
+  // of. Plain characters like "&" are left untouched (real artist names
+  // use them) since HTML-escaping them would only matter if something
+  // downstream decoded entities, which nothing here does.
+  function plainText(s) {
+    return String(s || "").replace(/[<>]/g, "")
+  }
+
+  // The real Deezer app serves art from its own CDN over https (verified
+  // live: cdn-images.dzcdn.net), so https can't be excluded, but any local
+  // process can claim the "deezer" identity and set this to whatever it
+  // wants - restrict to https/file so it can only ever point at a normal
+  // web image or a locally cached one, never an unusual/local-only scheme.
+  function safeArtUrl(url) {
+    var s = String(url || "").trim()
+    var scheme = s.toLowerCase()
+    return (scheme.indexOf("https://") === 0 || scheme.indexOf("file://") === 0) ? s : ""
+  }
 
   function findDeezerPlayer() {
     for (var i = 0; i < players.length; i++) {
@@ -384,6 +408,7 @@ BarWidget {
     Text {
       id: barTextLabel
       anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
       text: root.title ? (root.title + (root.artist ? "  ·  " + root.artist : "")) : "Deezer"
       color: root.bar.barForeground
       font.family: root.bar.fontFamily
@@ -537,6 +562,8 @@ BarWidget {
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             source: root.artUrl
+            sourceSize.width: Style.space(136)
+            sourceSize.height: Style.space(136)
             visible: source !== ""
           }
 
@@ -558,6 +585,7 @@ BarWidget {
           anchors.verticalCenter: parent.verticalCenter
 
           Text {
+            textFormat: Text.PlainText
             text: root.title || "Nothing playing"
             color: root.textPrimary
             font.family: root.bar.fontFamily
@@ -568,6 +596,7 @@ BarWidget {
           }
 
           Text {
+            textFormat: Text.PlainText
             text: root.artist
             color: root.textSecondary
             font.family: root.bar.fontFamily
@@ -578,6 +607,7 @@ BarWidget {
           }
 
           Text {
+            textFormat: Text.PlainText
             text: root.album
             color: root.textTertiary
             font.family: root.bar.fontFamily

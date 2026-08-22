@@ -54,7 +54,9 @@ Available from the gear icon inside the popup:
 
 ## Notes for reviewers
 
-- No sudo/polkit use anywhere, and no network requests at all - the removed playlist feature was the only thing that would've needed Deezer API access.
+- No sudo/polkit use anywhere. The plugin itself never calls out to the Deezer web API or needs any API key or credentials.
+- Album art is loaded from whatever `mpris:artUrl` the active MPRIS player reports - for the real Deezer app that's an `https://` URL on Deezer's own CDN (`cdn-images.dzcdn.net`), fetched directly by `Image.source`. Since any local process can claim the "deezer" MPRIS identity and control that URL, it's restricted to `https://`/`file://` schemes and the image is decoded with a bounded `sourceSize` so a malicious value can't force an oversized decode in the shared shell process.
+- Track title/artist/album come from the same untrusted MPRIS source. Every `Text` item displaying them is forced to `Text.PlainText`, and angle brackets are stripped before the text reaches the shared bar tooltip (whose own rendering this plugin doesn't control and defaults to AutoText) - both against a rogue "deezer" player smuggling rich text into the bar label, popup header, or tooltip.
 - Two external commands run via Quickshell's `Process`: `magick` (read-only, analyzes the current wallpaper image) and `hyprctl eval` for the Blur slider.
 - The Blur slider is the one thing with a side effect beyond this widget: it sets Hyprland's *global* `decoration.blur.size`, so turning it up blurs behind every window/layer, not just this popup.
 
