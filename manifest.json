@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.OmaDeezer",
+  "name": "Deezer",
+  "version": "1.0.0",
+  "author": "Deunnis",
+  "license": "MIT",
+  "description": "Deezer now-playing widget with playback controls",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Deezer",
+    "description": "Shows the current Deezer track. Click to play/pause, right-click to skip, scroll to go next/previous.",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "icon": "logo",
+      "blur": 40,
+      "transparency": 40,
+      "borderWidth": 2,
+      "cornerRadius": 2
+    },
+    "schema": [
+      {
+        "key": "icon",
+        "type": "enum",
+        "label": "Icon",
+        "description": "Icon shown on the bar, in the popup header, and as the album-art placeholder.",
+        "options": ["logo", "headphones", "note", "speaker", "playlist", "text"],
+        "defaultValue": "logo"
+      },
+      {
+        "key": "blur",
+        "type": "integer",
+        "label": "Blur",
+        "description": "Backdrop blur strength behind the popup (applies to all bar popups, not just Deezer's).",
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 40
+      },
+      {
+        "key": "transparency",
+        "type": "integer",
+        "label": "Transparency",
+        "description": "How see-through the popup background is.",
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 40
+      },
+      {
+        "key": "borderWidth",
+        "type": "integer",
+        "label": "Outline thickness",
+        "description": "Border width of the popup card and album art frame, in pixels.",
+        "min": 0,
+        "max": 6,
+        "step": 1,
+        "defaultValue": 2
+      },
+      {
+        "key": "cornerRadius",
+        "type": "integer",
+        "label": "Corner roundness",
+        "description": "Corner radius of the popup card, in pixels.",
+        "min": 0,
+        "max": 20,
+        "step": 1,
+        "defaultValue": 2
+      }
+    ]
+  }
+}
