@@ -15,7 +15,8 @@ A Deezer now-playing bar widget and popup player for [Omarchy](https://omarchy.o
 ## Requirements
 
 - [Omarchy](https://omarchy.org/) with its Quickshell-based shell
-- The official Deezer desktop app running, exposing an MPRIS interface identifying as "Deezer" (this is how the widget finds the player - it doesn't talk to the Deezer web API)
+- The official Deezer desktop app running, exposing an MPRIS interface identifying as "Deezer" (this is how the widget finds the player - it doesn't talk to the Deezer web API or need any API key)
+- [ImageMagick](https://imagemagick.org/) (`magick` on PATH) for the wallpaper-based color extraction. If it's missing, that feature silently falls back to your theme's normal accent color - nothing else is affected.
 
 ## Install
 
@@ -50,6 +51,12 @@ Available from the gear icon inside the popup:
 | Corner roundness | 0-20px | Popup card corner radius |
 
 "Reset to defaults" restores all of the above. "Reload plugin" does a full reload if the widget ever looks stuck.
+
+## Notes for reviewers
+
+- No sudo/polkit use anywhere, and no network requests at all - the removed playlist feature was the only thing that would've needed Deezer API access.
+- Two external commands run via Quickshell's `Process`: `magick` (read-only, analyzes the current wallpaper image) and `hyprctl eval` for the Blur slider.
+- The Blur slider is the one thing with a side effect beyond this widget: it sets Hyprland's *global* `decoration.blur.size`, so turning it up blurs behind every window/layer, not just this popup.
 
 ## Not included
 
