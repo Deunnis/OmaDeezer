@@ -20,17 +20,22 @@ A Deezer now-playing bar widget and popup player for [Omarchy](https://omarchy.o
 ## Install
 
 ```bash
-git clone https://github.com/Deunnis/OmaDeezer.git ~/.config/omarchy/plugins/io.github.OmaDeezer
-omarchy restart shell
+omarchy plugin add https://github.com/Deunnis/OmaDeezer.git --enable
 ```
 
-Then add it to your bar with:
+By default it's placed on the right side of the bar; move it with:
 
 ```bash
 omarchy bar move io.github.OmaDeezer --section right
 ```
 
 (or place it via `~/.config/omarchy/shell.json`, which is where all the settings below are also stored per-widget).
+
+## Uninstall
+
+```bash
+omarchy plugin remove io.github.OmaDeezer
+```
 
 ## Settings
 
