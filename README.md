@@ -27,7 +27,7 @@ omarchy plugin add https://github.com/Deunnis/OmaDeezer.git --enable
 By default it's placed on the right side of the bar; move it with:
 
 ```bash
-omarchy bar move io.github.OmaDeezer --section right
+omarchy bar move io.github.omadeezer --section right
 ```
 
 (or place it via `~/.config/omarchy/shell.json`, which is where all the settings below are also stored per-widget).
@@ -35,7 +35,7 @@ omarchy bar move io.github.OmaDeezer --section right
 ## Uninstall
 
 ```bash
-omarchy plugin remove io.github.OmaDeezer
+omarchy plugin remove io.github.omadeezer
 ```
 
 ## Settings
