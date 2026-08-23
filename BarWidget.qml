@@ -59,14 +59,17 @@ BarWidget {
   }
 
   // The real Deezer app serves art from its own CDN over https (verified
-  // live: cdn-images.dzcdn.net), so https can't be excluded, but any local
-  // process can claim the "deezer" identity and set this to whatever it
-  // wants - restrict to https/file so it can only ever point at a normal
-  // web image or a locally cached one, never an unusual/local-only scheme.
+  // live: cdn-images.dzcdn.net). Restricting to the https/file schemes
+  // still let a rogue "deezer"-identified local process point this at any
+  // https host, so an oversized or malicious image could be fetched from
+  // an attacker's own server - scope https to Deezer's actual CDN domain
+  // (anchored, so a suffix like "dzcdn.net.evil.com" or userinfo tricks
+  // like "dzcdn.net@evil.com" can't sneak past it) and keep allowing
+  // file:// for a locally cached path.
   function safeArtUrl(url) {
     var s = String(url || "").trim()
-    var scheme = s.toLowerCase()
-    return (scheme.indexOf("https://") === 0 || scheme.indexOf("file://") === 0) ? s : ""
+    if (/^file:\/\//i.test(s)) return s
+    return /^https:\/\/([a-z0-9-]+\.)*dzcdn\.net\//i.test(s) ? s : ""
   }
 
   function findDeezerPlayer() {
