@@ -19,11 +19,25 @@ BarWidget {
   readonly property string artist: plainText(active ? (player.trackArtist || "") : "")
   readonly property string album: plainText(active && player.trackAlbum ? player.trackAlbum : "")
   readonly property string artUrl: safeArtUrl(active && player.trackArtUrl ? player.trackArtUrl : "")
-  // Art is only rendered once a HEAD request confirms the CDN's own
-  // Content-Length is within bound - sourceSize alone only caps decoded
-  // pixel dimensions, not the raw bytes fetched/decoded to get there.
+  // Art is downloaded ourselves into a private cache file rather than handed
+  // straight to Image.source: a HEAD Content-Length check doesn't bind the
+  // actual GET (the server or a redirect hop can still return a larger or
+  // chunked body), so curl's own --max-filesize enforces the cap during the
+  // real transfer into a file only this widget writes, and only a
+  // size-reverified local file is ever exposed to Image.source.
   property string verifiedArtUrl: ""
   readonly property int maxArtBytes: 8 * 1024 * 1024
+  readonly property string artCacheDir: (Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")) + "/omarchy/io.github.omadeezer/art"
+  property bool artCacheReady: false
+  // The single art Process trio (mktemp -> curl -> stat) is reused
+  // sequentially rather than spawned per track change, so these track which
+  // url the in-flight chain belongs to rather than relying on process
+  // identity - see artStageFinished() for why that distinction matters.
+  property string wantedArtUrl: ""
+  property string runningArtUrl: ""
+  property string verifiedForUrl: ""
+  property string activeTempPath: ""
+  property string lastGoodArtPath: ""
   readonly property bool canSeek: active && player.canSeek && player.positionSupported
   readonly property bool showSeekBar: active && player.positionSupported && player.lengthSupported
   readonly property real trackDuration: active && player.lengthSupported ? player.length : 0
@@ -75,30 +89,125 @@ BarWidget {
     return /^https:\/\/([a-z0-9-]+\.)*dzcdn\.net\//i.test(s) ? s : ""
   }
 
-  onArtUrlChanged: verifyArtUrl(artUrl)
-
-  // HEAD the candidate art URL and only let the Image element see it once
-  // the CDN reports a Content-Length under maxArtBytes - guards against a
-  // compromised/spoofed dzcdn.net response (or a redirect target) forcing
-  // the shell to download and decode an oversized image. Fails closed: no
-  // Content-Length, a non-2xx status, or a size over the cap all leave
-  // verifiedArtUrl empty, which falls back to the placeholder icon.
-  function verifyArtUrl(url) {
-    verifiedArtUrl = ""
-    if (!url) return
-    var xhr = new XMLHttpRequest()
-    xhr.open("HEAD", url)
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState !== XMLHttpRequest.DONE) return
-      // root can go null if a shell.json write tears this widget down
-      // while the request is in flight (see the note near shell.json
-      // reload handling below); bail before touching it.
-      if (!root || url !== root.artUrl) return // superseded, or widget gone
-      if (xhr.status < 200 || xhr.status >= 300) return
-      var len = parseInt(xhr.getResponseHeader("Content-Length"), 10)
-      if (!isNaN(len) && len > 0 && len <= maxArtBytes) verifiedArtUrl = url
+  // Downloads the candidate art URL into a fresh, exclusively-created local
+  // file (curl's own --max-filesize aborts the transfer itself if it grows
+  // past the cap, unlike a HEAD Content-Length check) and only lets the
+  // Image element see the local file once its on-disk size is reverified.
+  // Fails closed at every step: not ready yet, or a missing dir/mktemp/curl/
+  // stat failure, or an oversized result, all leave verifiedArtUrl empty,
+  // which falls back to the placeholder icon.
+  onArtUrlChanged: {
+    wantedArtUrl = artUrl
+    if (wantedArtUrl !== verifiedForUrl) verifiedArtUrl = ""
+    else if (verifiedArtUrl) return // already showing verified art for this exact url
+    if (mktempProc.running || artDownloadProc.running || artStatProc.running) {
+      // A chain for the previous url is still in flight. Terminate it and
+      // let artStageFinished() notice the mismatch once it actually stops -
+      // see the comment there for why this can't just be raced past.
+      if (mktempProc.running) mktempProc.running = false
+      if (artDownloadProc.running) artDownloadProc.running = false
+      if (artStatProc.running) artStatProc.running = false
+    } else {
+      startArtDownload()
     }
-    xhr.send()
+  }
+
+  function startArtDownload() {
+    if (runningArtUrl || !wantedArtUrl || !artCacheReady) return
+    runningArtUrl = wantedArtUrl
+    mktempProc.command = ["mktemp", artCacheDir + "/art-XXXXXX"]
+    mktempProc.running = true
+  }
+
+  // mktemp/curl/stat are a single reused Process trio, not one spawned per
+  // track change, so a stage's onExited can't just compare "is this url
+  // still current" against a property that a newer call may have already
+  // overwritten by the time a *terminated* old process's exited() fires
+  // (QProcess still emits it on termination). runningArtUrl is instead only
+  // ever cleared here, at actual completion, so this comparison is safe;
+  // a mismatch means the chain that just finished was cancelled mid-flight
+  // and its result must be discarded, with a fresh chain started for
+  // whatever url is current now.
+  function artStageFinished() {
+    var forUrl = runningArtUrl
+    runningArtUrl = ""
+    return forUrl === wantedArtUrl
+  }
+
+  function rmCacheFile(path) {
+    if (!path) return
+    artCleanupProc.command = ["rm", "-f", "--", path]
+    artCleanupProc.running = true
+  }
+
+  Process { id: artCleanupProc }
+
+  // Wiped and recreated on every widget startup so files left by a prior,
+  // possibly ungracefully-killed session never linger, and so a pre-existing
+  // symlink at this path can't redirect our writes elsewhere.
+  Process {
+    id: artCacheInitProc
+    command: ["sh", "-c", "rm -rf -- \"$0\" && mkdir -p -- \"$0\"", root.artCacheDir]
+    onExited: function(code) {
+      if (!root) return
+      root.artCacheReady = true
+      root.startArtDownload()
+    }
+  }
+
+  Process {
+    id: mktempProc
+    stdout: StdioCollector { id: mktempOut; waitForEnd: true }
+    onExited: function(code) {
+      if (!root) return
+      var path = String(mktempOut.text || "").trim()
+      if (!root.artStageFinished()) { root.rmCacheFile(path); root.startArtDownload(); return }
+      if (code !== 0 || !path) { root.verifiedArtUrl = ""; root.startArtDownload(); return }
+      root.activeTempPath = path
+      root.runningArtUrl = root.wantedArtUrl
+      // No -L: the art host is anchored to *.dzcdn.net above, and following
+      // a redirect would hand that trust to whatever host it points at.
+      artDownloadProc.command = ["curl", "-fsS", "--max-time", "20", "--proto", "=https",
+        "--max-filesize", String(root.maxArtBytes), "--output", path, root.wantedArtUrl]
+      artDownloadProc.running = true
+    }
+  }
+
+  Process {
+    id: artDownloadProc
+    onExited: function(code) {
+      if (!root) return
+      var path = root.activeTempPath
+      root.activeTempPath = ""
+      if (!root.artStageFinished()) { root.rmCacheFile(path); root.startArtDownload(); return }
+      if (code !== 0) { root.rmCacheFile(path); root.verifiedArtUrl = ""; root.startArtDownload(); return }
+      root.activeTempPath = path
+      root.runningArtUrl = root.wantedArtUrl
+      artStatProc.command = ["stat", "-c", "%s", path]
+      artStatProc.running = true
+    }
+  }
+
+  Process {
+    id: artStatProc
+    stdout: StdioCollector { id: artStatOut; waitForEnd: true }
+    onExited: function(code) {
+      if (!root) return
+      var path = root.activeTempPath
+      root.activeTempPath = ""
+      var matched = root.artStageFinished()
+      var size = parseInt(String(artStatOut.text || "").trim(), 10)
+      if (matched && code === 0 && !isNaN(size) && size > 0 && size <= root.maxArtBytes) {
+        if (root.lastGoodArtPath && root.lastGoodArtPath !== path) root.rmCacheFile(root.lastGoodArtPath)
+        root.lastGoodArtPath = path
+        root.verifiedForUrl = root.wantedArtUrl
+        root.verifiedArtUrl = "file://" + path
+      } else {
+        root.rmCacheFile(path)
+        if (matched) root.verifiedArtUrl = ""
+      }
+      if (!matched) root.startArtDownload()
+    }
   }
 
   function findDeezerPlayer() {
@@ -387,7 +496,7 @@ BarWidget {
   Component.onCompleted: {
     applyBlur()
     extractPalette()
-    verifyArtUrl(artUrl)
+    artCacheInitProc.running = true
     debugOpenTimer.start()
   }
   Timer { id: debugOpenTimer; interval: 600; onTriggered: root.popupOpen = true }
@@ -401,7 +510,14 @@ BarWidget {
   // so the reload happens after there's nothing visible left to interrupt.
   property bool settingsDirty: false
   onPopupOpenChanged: if (!popupOpen) flushSettings()
-  Component.onDestruction: flushSettings()
+  Component.onDestruction: {
+    flushSettings()
+    if (mktempProc.running) mktempProc.running = false
+    if (artDownloadProc.running) artDownloadProc.running = false
+    if (artStatProc.running) artStatProc.running = false
+    rmCacheFile(activeTempPath)
+    rmCacheFile(lastGoodArtPath)
+  }
 
   function flushSettings() {
     if (!root.settingsDirty) return
