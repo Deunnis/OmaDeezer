@@ -497,9 +497,7 @@ BarWidget {
     applyBlur()
     extractPalette()
     artCacheInitProc.running = true
-    debugOpenTimer.start()
   }
-  Timer { id: debugOpenTimer; interval: 600; onTriggered: root.popupOpen = true }
 
   // A shell.json write reloads the plugin registry shell-wide (not just this
   // widget), which tears down and recreates this Item mid-interaction -
