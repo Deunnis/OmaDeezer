@@ -19,6 +19,11 @@ BarWidget {
   readonly property string artist: plainText(active ? (player.trackArtist || "") : "")
   readonly property string album: plainText(active && player.trackAlbum ? player.trackAlbum : "")
   readonly property string artUrl: safeArtUrl(active && player.trackArtUrl ? player.trackArtUrl : "")
+  // Art is only rendered once a HEAD request confirms the CDN's own
+  // Content-Length is within bound - sourceSize alone only caps decoded
+  // pixel dimensions, not the raw bytes fetched/decoded to get there.
+  property string verifiedArtUrl: ""
+  readonly property int maxArtBytes: 8 * 1024 * 1024
   readonly property bool canSeek: active && player.canSeek && player.positionSupported
   readonly property bool showSeekBar: active && player.positionSupported && player.lengthSupported
   readonly property real trackDuration: active && player.lengthSupported ? player.length : 0
@@ -59,17 +64,41 @@ BarWidget {
   }
 
   // The real Deezer app serves art from its own CDN over https (verified
-  // live: cdn-images.dzcdn.net). Restricting to the https/file schemes
-  // still let a rogue "deezer"-identified local process point this at any
-  // https host, so an oversized or malicious image could be fetched from
-  // an attacker's own server - scope https to Deezer's actual CDN domain
+  // live via busctl: cdn-images.dzcdn.net) and never sends file:// URLs,
+  // so file:// is rejected outright rather than trusted - a rogue
+  // "deezer"-identified local process could otherwise point this at an
+  // arbitrary local path. Scope https to Deezer's actual CDN domain
   // (anchored, so a suffix like "dzcdn.net.evil.com" or userinfo tricks
-  // like "dzcdn.net@evil.com" can't sneak past it) and keep allowing
-  // file:// for a locally cached path.
+  // like "dzcdn.net@evil.com" can't sneak past it).
   function safeArtUrl(url) {
     var s = String(url || "").trim()
-    if (/^file:\/\//i.test(s)) return s
     return /^https:\/\/([a-z0-9-]+\.)*dzcdn\.net\//i.test(s) ? s : ""
+  }
+
+  onArtUrlChanged: verifyArtUrl(artUrl)
+
+  // HEAD the candidate art URL and only let the Image element see it once
+  // the CDN reports a Content-Length under maxArtBytes - guards against a
+  // compromised/spoofed dzcdn.net response (or a redirect target) forcing
+  // the shell to download and decode an oversized image. Fails closed: no
+  // Content-Length, a non-2xx status, or a size over the cap all leave
+  // verifiedArtUrl empty, which falls back to the placeholder icon.
+  function verifyArtUrl(url) {
+    verifiedArtUrl = ""
+    if (!url) return
+    var xhr = new XMLHttpRequest()
+    xhr.open("HEAD", url)
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== XMLHttpRequest.DONE) return
+      // root can go null if a shell.json write tears this widget down
+      // while the request is in flight (see the note near shell.json
+      // reload handling below); bail before touching it.
+      if (!root || url !== root.artUrl) return // superseded, or widget gone
+      if (xhr.status < 200 || xhr.status >= 300) return
+      var len = parseInt(xhr.getResponseHeader("Content-Length"), 10)
+      if (!isNaN(len) && len > 0 && len <= maxArtBytes) verifiedArtUrl = url
+    }
+    xhr.send()
   }
 
   function findDeezerPlayer() {
@@ -358,6 +387,7 @@ BarWidget {
   Component.onCompleted: {
     applyBlur()
     extractPalette()
+    verifyArtUrl(artUrl)
     debugOpenTimer.start()
   }
   Timer { id: debugOpenTimer; interval: 600; onTriggered: root.popupOpen = true }
@@ -564,7 +594,7 @@ BarWidget {
             anchors.margins: Style.space(2)
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
-            source: root.artUrl
+            source: root.verifiedArtUrl
             sourceSize.width: Style.space(136)
             sourceSize.height: Style.space(136)
             visible: source !== ""
@@ -578,7 +608,7 @@ BarWidget {
             source: root.currentIconSource
             tint: "white"
             opacity01: 0.5
-            visible: root.artUrl === ""
+            visible: root.verifiedArtUrl === ""
           }
         }
 
